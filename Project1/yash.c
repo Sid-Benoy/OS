@@ -6,8 +6,8 @@
 #include <sys/types.h>
 #include <sys/file.h>
 #include <sys/stat.h>
-#include <sys/errno.h>
-#include <sys/wait.h>
+#include <errno.h>
+#include <wait.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -65,9 +65,6 @@ int main()
 void execute_command(char * command, char * arguments[], int token_count)
 {
     int cpid, error, redirection_flag, file_descriptor;
-
-    printf("%s", arguments[0]);
-    printf("hi");
 
     for (int i = 0; i < token_count; i++)
     {
