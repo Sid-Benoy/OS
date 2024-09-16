@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug yash",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/Project1/yash",  // Path to the output binary
+        "args": [],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "environment": [],
+        "externalConsole": true,
+        "MIMode": "gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ],
+        "preLaunchTask": "build yash",  // Links to the task defined in tasks.json
+        "miDebuggerPath": "/usr/bin/gdb",
+        "logging": {
+          "trace": true,   // Set true for additional logging during debug
+          "traceResponse": true,
+          "engineLogging": true
+        }
+      }
+    ]
+  }
+  

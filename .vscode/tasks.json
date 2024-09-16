@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "build yash",
+        "type": "shell",
+        "command": "gcc",
+        "args": [
+          "-o", "Project1/yash",     // Specifies output executable name
+          "Project1/yash.c",         // Your C file
+          "-lreadline"      // Link the readline library
+        ],
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": ["$gcc"],
+        "detail": "Compiles yash.c with gcc and links readline library"
+      }
+    ]
+  }
+  
