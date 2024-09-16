@@ -20,11 +20,14 @@
 
 void execute_command(char * command, char * arguments[], int token_count);
 void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count);
-void handle_signal(int signumber);
+void sig_handler(int signumber);
 void clear_args(char * arguments[]);
 
 int main()
 {
+    signal(SIGINT, sig_handler);
+    signal(SIGTSTP, sig_handler);
+
     pid_t pid;
     char * commands[MAXINPUTS];
     int command_index, token_count;
@@ -35,6 +38,8 @@ int main()
 
     while ((line = readline("# ")))
     {
+
+
         token = strtok(line," ");
         commands[command_index] = token;
 
@@ -73,12 +78,12 @@ void execute_command(char * command, char * arguments[], int token_count)
     sub_args[0] = command;              //adding command to subargs to help exec
     sub_args[1] = NULL;
 
-    for (int i = 1; i < token_count; i++)
+    for (int i = 1; i < token_count; i++)                                       //first run through of command, and arguments...
     {
         if (strcmp(arguments[i], "|") == 0)
         {
             char * command2 = arguments[i+1];
-            file_redirection_piping(command, command2, arguments, token_count);k
+            file_redirection_piping(command, command2, arguments, token_count);
             //check for bg/fg
             return;
             }
@@ -163,24 +168,26 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
     int file_descriptor_err = -1;
 
     argument_index = 0;
-    char *left_arguments[MAXINPUTS];
-    char *right_arguments[MAXINPUTS];
+    char * left_arguments[MAXINPUTS];
+    char * right_arguments[MAXINPUTS];
 
     int index = 0;
     for (index;
          strcmp(arguments[index], "|") != 0; index++)           //gets command options into two arrays for both commands
     {
-        while ((strcmp(arguments[index], ">") != 0) && (strcmp(arguments[index], "<") != 0) &&
-               (strcmp(arguments[index], "2>") != 0) && (strcmp(arguments[index], "|") != 0)) {
+        if (strcmp(arguments[index], "<") == 0 || strcmp(arguments[index], ">") == 0 || strcmp(arguments[index], "2>") == 0) {
+            continue;
+        }
+        else
+        {
             left_arguments[argument_index] = arguments[index];
             argument_index++;
             left_arguments[argument_index] = NULL;
-            index++;
         }
-        break;
     }
     index++; //where pipe is, increment index
     argument_index = 0;
+
     while ((strcmp(arguments[index], ">") != 0) && (strcmp(arguments[index], "<") != 0) &&
     (strcmp(arguments[index], "2>") != 0))
     {
@@ -301,8 +308,6 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
     wait((int *)NULL);
     wait((int *)NULL);
 
-
-
 }
 
 void clear_args(char * arguments[])
@@ -313,22 +318,23 @@ void clear_args(char * arguments[])
     }
 }
 
-//void handle_signal(int signumber)
-//{
-//    switch(signumber)
-//    {
-//        case SIGHUP:
-//            printf("caught sighup aka the ending\n");
-//            exit(0);
-//        case SIGINT:
-//            printf("caught sigint\n");
-//            exit(0);
-//        case SIGTSTP:
-//            printf("caught sigtstp\n");
-//            break;
-//        default:
-//            printf("hi");
-//            break;
-//    }
-//}
+void sig_handler(int signumber)
+{
+    printf("HI");
+    switch(signumber)
+    {
+        case SIGINT:
+            printf("caught sigint\n");
+            exit(0);
+        case SIGTSTP:
+            printf("caught sigtstp\n");
+            break;
+        case SIGCHLD:
+            printf("hey");
+            break;
+        default:
+            printf("hi");
+            break;
+    }
+}
 
