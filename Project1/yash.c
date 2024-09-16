@@ -65,69 +65,41 @@ int main()
 
 void execute_command(char * command, char * arguments[], int token_count)
 {
-    int cpid, error, redirection_flag, file_descriptor, sub_args_index;
+    int cpid, error, redirection_flag, file_descriptor_in, file_descriptor_out, file_descriptor_err, sub_args_index, redirection;
 
-    sub_args_index = 0;
+    sub_args_index = 1;
 
     char * sub_args[MAXINPUTS];
+    sub_args[0] = command;              //adding command to subargs to help exec
+    sub_args[1] = NULL;
 
-    for (int i = 0; i < token_count; i++)
+    for (int i = 1; i < token_count; i++)
     {
         if (strcmp(arguments[i], "|") == 0)
         {
             char * command2 = arguments[i+1];
-            file_redirection_piping(command, command2, arguments, token_count);
+            file_redirection_piping(command, command2, arguments, token_count);k
             //check for bg/fg
             return;
-        }
-        else if (strcmp(arguments[i], "<") == 0 && i+1 == token_count-1)
+            }
+        else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)              //single command redirection, up to >, <, 2>
         {
-            file_descriptor = open(arguments[i+1], O_RDONLY);
-            cpid = fork();
-            if (cpid == 0)
-            {
-                dup2(file_descriptor, STDIN_FILENO);
-                execvp(command, sub_args);
-            }
-            else
-            {
-                wait(NULL);
-            }
-            close(file_descriptor);
-            return;
+            file_descriptor_in = open(arguments[i+1], O_RDONLY);
+            redirection = true;
+            i++;
+
         }
-        else if (strcmp(arguments[i], ">") == 0 && i+1 == token_count-1)
+        else if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor = creat(arguments[i+1], O_WRONLY);
-            cpid = fork();
-            if (cpid == 0)
-            {
-                dup2(file_descriptor, STDOUT_FILENO);
-                execvp(command, sub_args);
-            }
-            else
-            {
-                wait(NULL);
-            }
-            close(file_descriptor);
-            clear_args(sub_args);
-            return;
+            file_descriptor_out = creat(arguments[i+1], O_WRONLY);
+            redirection = true;
+            i++;
         }
-        else if (strcmp(arguments[i], "2>") == 0 && i+1 == token_count-1)
+        else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor = creat(arguments[i+1], O_WRONLY);
-            cpid = fork();
-            if (cpid == 0)
-            {
-                dup2(file_descriptor, STDERR_FILENO);
-                execvp(command, sub_args);
-            }
-            else
-            {
-                wait(NULL);
-            }
-            close(file_descriptor);
-            return;
+            file_descriptor_err = creat(arguments[i+1], O_WRONLY);
+            redirection = true;
+            i++;
         }
         else
         {
@@ -137,7 +109,35 @@ void execute_command(char * command, char * arguments[], int token_count)
         }
     }
 
-    
+    if (redirection)
+    {
+        cpid = fork();
+        if (cpid == 0)
+        {
+            if (file_descriptor_out)
+            {
+                dup2(file_descriptor_in, STDIN_FILENO);             //exec single command redirection
+                close(file_descriptor_in);
+            }
+            if (file_descriptor_in)
+            {
+                dup2(file_descriptor_out, STDOUT_FILENO);
+                close(file_descriptor_in);
+            }
+            if (file_descriptor_err)
+            {
+                dup2(file_descriptor_err, STDERR_FILENO);
+                close(file_descriptor_err);
+            }
+            execvp(command, sub_args);
+        }
+        else
+        {
+            wait(NULL);
+        }
+        clear_args(sub_args);
+        return;
+    }
     
     cpid = fork();
     if (cpid == 0)
@@ -148,52 +148,161 @@ void execute_command(char * command, char * arguments[], int token_count)
     {
         wait((int*) NULL);
     }
+    clear_args(sub_args);
 
 
 
 }
 
-void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count)
-{
+void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count) {
     int pdf[2];
-    int cpid, lpid, argument_index;
-    argument_index = 0;
-    char * left_arguments[MAXINPUTS];
-    char * right_arguments[MAXINPUTS];
+    int rpid, lpid, argument_index;
 
-    for (int i = 0; i < token_count; i++)           //gets command options into two arrays for both commands
+    int file_descriptor_in = -1;
+    int file_descriptor_out = -1;
+    int file_descriptor_err = -1;
+
+    argument_index = 0;
+    char *left_arguments[MAXINPUTS];
+    char *right_arguments[MAXINPUTS];
+
+    int index = 0;
+    for (index;
+         strcmp(arguments[index], "|") != 0; index++)           //gets command options into two arrays for both commands
     {
-        while ((strcmp(arguments[i], ">") == 0) || (strcmp(arguments[i], "<") == 0) || (strcmp(arguments[i], "2>") ==0))
-        {
-            left_arguments[argument_index] = arguments[i];
+        while ((strcmp(arguments[index], ">") != 0) && (strcmp(arguments[index], "<") != 0) &&
+               (strcmp(arguments[index], "2>") != 0) && (strcmp(arguments[index], "|") != 0)) {
+            left_arguments[argument_index] = arguments[index];
             argument_index++;
             left_arguments[argument_index] = NULL;
-            i++;
+            index++;
         }
-        argument_index = 0;
-        if (strcmp(arguments[i], command2) == 0)
-        {
-            while ((strcmp(arguments[i], ">") == 0) || (strcmp(arguments[i], "<") == 0) || (strcmp(arguments[i], "2>") ==0))
-            {
-                right_arguments[argument_index] = arguments[i];
-                argument_index++;
-                right_arguments[argument_index] = NULL;
-                i++;
-            }
-        }
+        break;
+    }
+    index++; //where pipe is, increment index
+    argument_index = 0;
+    while ((strcmp(arguments[index], ">") != 0) && (strcmp(arguments[index], "<") != 0) &&
+    (strcmp(arguments[index], "2>") != 0))
+    {
+        right_arguments[argument_index] = arguments[index];
+        argument_index++;
+        right_arguments[argument_index] = NULL;
+        index++;
+        if (index == token_count)
+            break;
     }
 
 
-
-    if (pipe(pdf) == -1)
-    {
+    if (pipe(pdf) == -1) {
         exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; i < token_count; i++)
+    int i = 0;
+    for (i; strcmp(arguments[i], "|") != 0; i++)
     {
-
+        if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
+        {
+            file_descriptor_out = creat(arguments[i+1], O_WRONLY);
+//            if (file_descriptor_out < 0)
+//            {
+//                perror("open output");
+//                exit(EXIT_FAILURE);
+//            }
+        }
+        else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)
+        {
+            file_descriptor_in = open(arguments[i+1], O_RDONLY);
+            dup2(file_descriptor_in, STDIN_FILENO);
+        }
+        else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
+        {
+            file_descriptor_err = creat(arguments[i+1], O_WRONLY);
+            dup2(file_descriptor_err, STDERR_FILENO);
+        }
     }
+
+    lpid = fork();
+    if (lpid == 0)
+    {
+        if (file_descriptor_out > 0)
+        {
+            dup2(file_descriptor_out, STDOUT_FILENO);
+            close(file_descriptor_out);
+        }
+        if (file_descriptor_in > 0)
+        {
+            dup2(file_descriptor_in, STDIN_FILENO);
+            close(file_descriptor_out);
+        }
+        if (file_descriptor_err > 0) {
+            dup2(file_descriptor_err, STDERR_FILENO);
+            close(file_descriptor_err);
+        }
+
+        dup2(pdf[1], STDOUT_FILENO);
+        close(pdf[0]);
+        close(pdf[1]);
+        execvp(command, left_arguments);
+    }
+
+    file_descriptor_err = -1;
+    file_descriptor_out = -1;
+    file_descriptor_in = -1;
+
+    for (i; arguments[i] != NULL; i++)
+    {
+        if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
+        {
+            file_descriptor_out = creat(arguments[i+1], O_WRONLY);
+//            if (file_descriptor_out < 0)
+//            {
+//                perror("open output");
+//                exit(EXIT_FAILURE);
+//            }
+        }
+        else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)
+        {
+            file_descriptor_in = open(arguments[i+1], O_RDONLY);
+            dup2(file_descriptor_in, STDIN_FILENO);
+        }
+        else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
+        {
+            file_descriptor_err = creat(arguments[i+1], O_WRONLY);
+            dup2(file_descriptor_err, STDERR_FILENO);
+        }
+    }
+
+    rpid = fork();
+    if (rpid == 0)
+    {
+        if (file_descriptor_out > 0)
+        {
+            dup2(file_descriptor_out, STDOUT_FILENO);
+            close(file_descriptor_out);
+        }
+        if (file_descriptor_in > 0)
+        {
+            dup2(file_descriptor_in, STDIN_FILENO);
+            close(file_descriptor_out);
+        }
+        if (file_descriptor_err > 0) {
+            dup2(file_descriptor_err, STDERR_FILENO);
+            close(file_descriptor_err);
+        }
+
+        dup2(pdf[0], STDIN_FILENO);
+        close(pdf[1]);
+        close(pdf[1]);
+        execvp(command2, right_arguments);
+    }
+
+    close(pdf[0]);
+    close(pdf[1]);
+    wait((int *)NULL);
+    wait((int *)NULL);
+
+
+
 }
 
 void clear_args(char * arguments[])
