@@ -18,15 +18,32 @@
 #define MAXINPUTS 100
 #define MAXLABELS 10
 
+typedef enum {Stopped, Running, Done} status;
+
+mode_t mode = S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH;
+int jid = 0;
+
 void execute_command(char * command, char * arguments[], int token_count);
 void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count);
 void sig_handler(int signumber);
 void clear_args(char * arguments[]);
+void printjobs();
+
+struct Job
+{
+    int job_id;
+    int pgid;
+    status state;
+    char * jstr;
+    bool bg;
+    struct job * next;
+};
 
 int main()
 {
     signal(SIGINT, sig_handler);
     signal(SIGTSTP, sig_handler);
+    signal(SIGCHLD, sig_handler);
 
     pid_t pid;
     char * commands[MAXINPUTS];
@@ -39,9 +56,23 @@ int main()
     while ((line = readline("# ")))
     {
 
-
+        add_history(line);
         token = strtok(line," ");
         commands[command_index] = token;
+
+        if (strcmp(token, "fg") == 0)
+        {
+
+        }
+        else if (strcmp(token, "bg") == 0)
+        {
+
+        }
+        else if (strcmp(token, "jobs") == 0)
+        {
+            printjobs();
+        }
+
 
         while (token != NULL)
         {
@@ -70,13 +101,23 @@ int main()
 
 void execute_command(char * command, char * arguments[], int token_count)
 {
-    int cpid, error, redirection_flag, file_descriptor_in, file_descriptor_out, file_descriptor_err, sub_args_index, redirection;
+    int cpid, error, redirection_flag, file_descriptor_in, file_descriptor_out, file_descriptor_err, sub_args_index;
+    bool redirection = false;
+    struct Job new_job;
 
+    bool is_bg;
     sub_args_index = 1;
 
     char * sub_args[MAXINPUTS];
     sub_args[0] = command;              //adding command to subargs to help exec
     sub_args[1] = NULL;
+
+    if (strcmp(arguments[token_count-1], "&") == 0)
+    {
+        is_bg = true;
+        arguments[token_count-1] = NULL;
+        token_count--;
+    }
 
     for (int i = 1; i < token_count; i++)                                       //first run through of command, and arguments...
     {
@@ -89,20 +130,20 @@ void execute_command(char * command, char * arguments[], int token_count)
             }
         else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)              //single command redirection, up to >, <, 2>
         {
-            file_descriptor_in = open(arguments[i+1], O_RDONLY);
+            file_descriptor_in = open(arguments[i+1], O_RDONLY, mode);
             redirection = true;
             i++;
 
         }
         else if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_out = creat(arguments[i+1], O_WRONLY);
+            file_descriptor_out = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
             redirection = true;
             i++;
         }
         else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_err = creat(arguments[i+1], O_WRONLY);
+            file_descriptor_err = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
             redirection = true;
             i++;
         }
@@ -113,6 +154,8 @@ void execute_command(char * command, char * arguments[], int token_count)
             sub_args_index++;
         }
     }
+
+
 
     if (redirection)
     {
@@ -134,6 +177,7 @@ void execute_command(char * command, char * arguments[], int token_count)
                 dup2(file_descriptor_err, STDERR_FILENO);
                 close(file_descriptor_err);
             }
+            setpgid(0, 0);
             execvp(command, sub_args);
         }
         else
@@ -143,18 +187,31 @@ void execute_command(char * command, char * arguments[], int token_count)
         clear_args(sub_args);
         return;
     }
-    
+    new_job.bg = is_bg;
+    new_job.job_id = jid;
+    new_job.jstr = strcat(command, (const char *) arguments);
+
+    printf("%s", new_job.jstr);
+
     cpid = fork();
     if (cpid == 0)
     {
+
+        setpgid(0, 0);
+        new_job.pgid = getppid();
+        new_job.state = Running;
         execvp(command, arguments);
+    }
+    else if (is_bg)
+    {
+        new_job.state = Running;
     }
     else
     {
         wait((int*) NULL);
     }
     clear_args(sub_args);
-
+    is_bg = false;
 
 
 }
@@ -162,6 +219,7 @@ void execute_command(char * command, char * arguments[], int token_count)
 void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count) {
     int pdf[2];
     int rpid, lpid, argument_index;
+    bool is_bg;
 
     int file_descriptor_in = -1;
     int file_descriptor_out = -1;
@@ -209,7 +267,7 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
     {
         if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_out = creat(arguments[i+1], O_WRONLY);
+            file_descriptor_out = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
 //            if (file_descriptor_out < 0)
 //            {
 //                perror("open output");
@@ -218,14 +276,19 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
         }
         else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_in = open(arguments[i+1], O_RDONLY);
+            file_descriptor_in = open(arguments[i+1], O_RDONLY | O_CREAT, mode);
             dup2(file_descriptor_in, STDIN_FILENO);
         }
         else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_err = creat(arguments[i+1], O_WRONLY);
+            file_descriptor_err = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
             dup2(file_descriptor_err, STDERR_FILENO);
         }
+    }
+
+    if (strcmp(arguments[token_count-1], "&") == 0)
+    {
+        is_bg = true;
     }
 
     lpid = fork();
@@ -249,6 +312,7 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
         dup2(pdf[1], STDOUT_FILENO);
         close(pdf[0]);
         close(pdf[1]);
+        setpgid(0, 0);
         execvp(command, left_arguments);
     }
 
@@ -300,6 +364,7 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
         dup2(pdf[0], STDIN_FILENO);
         close(pdf[1]);
         close(pdf[1]);
+        setpgid(0, lpid);
         execvp(command2, right_arguments);
     }
 
@@ -318,23 +383,34 @@ void clear_args(char * arguments[])
     }
 }
 
+void printjobs()
+{
+
+}
+
 void sig_handler(int signumber)
 {
-    printf("HI");
+    pid_t pid;
     switch(signumber)
     {
         case SIGINT:
-            printf("caught sigint\n");
-            exit(0);
+            pid = tcgetpgrp(STDIN_FILENO);
+            if (kill(-pid, SIGINT) == 0)
+            {
+                printf("hi");
+            }
+            else
+                perror("error");
+            break;
         case SIGTSTP:
-            printf("caught sigtstp\n");
+            tcsetpgrp(STDIN_FILENO, getpid());
+            printf("\n");
+            printf("# ");
             break;
         case SIGCHLD:
-            printf("hey");
+            while (waitpid(-1, NULL, WNOHANG) > 0);
             break;
-        default:
-            printf("hi");
-            break;
+
     }
 }
 
