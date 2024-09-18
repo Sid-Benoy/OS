@@ -21,16 +21,21 @@
 
 typedef enum {Stopped, Running, Done} status;
 
-mode_t mode = S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH;
+typedef struct Job Job;
+mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH;
 int jid = 0;
 int child_id = 0;
 
-void execute_command(char * command, char * arguments[], int token_count);
+void execute_command(char * command, char * arguments[], int token_count, char * OGcommand);
 void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count);
 void sig_handler(int signumber);
 void clear_args(char * arguments[]);
-void printjobs();
-void add_job(pid_t pid, char * command, status stat, bool bg);
+void print_jobs();
+void add_job(pid_t pid, char * command, status stat, bool backg);
+void fg();
+void bg();
+void clean_up_jobs();
+
 struct Job
 {
     int job_id;
@@ -41,15 +46,26 @@ struct Job
     struct job * next;
 };
 
-struct Job * jobs[MAXINPUTS];
+struct Job jobs[MAXINPUTS];
 int job_index = 0;
 
-void add_job(pid_t pid, char * command, status t, bool bg)
+void add_job(pid_t pid, char * command, status t, bool backg)
 {
-
+    struct Job j;
+    j.jstr = strdup(command);
+    j.state = t;
+    j.pgid = pid;
+    j.job_id = job_index;
+    j.bg = backg;
+    jobs[job_index] = j;
+    job_index++;
+    //free(j);
 }
+
+
 int main()
 {
+    using_history();
 
     signal(SIGCHLD, sig_handler);
     signal(SIGINT, sig_handler);
@@ -67,22 +83,25 @@ int main()
     {
         if(strcmp(line, "") == 0)
             continue;
-
+        char * command = strdup(line);
         add_history(line);
         token = strtok(line," ");
         commands[command_index] = token;
 
         if (strcmp(token, "fg") == 0)
         {
-
+            fg();
+            continue;
         }
         else if (strcmp(token, "bg") == 0)
         {
-
+            bg();
+            continue;
         }
         else if (strcmp(token, "jobs") == 0)
         {
-            printjobs();
+            print_jobs();
+            continue;
         }
 
 
@@ -94,19 +113,18 @@ int main()
             commands[command_index] = token;
         }
 
-        execute_command(commands[0], commands, token_count);
+        execute_command(commands[0], commands, token_count, command);
 
         clear_args(commands);
         command_index = 0;
         token_count = 0;
         free(line);
     }
-
 }
 
 
 
-void execute_command(char * command, char * arguments[], int token_count)
+void execute_command(char * command, char * arguments[], int token_count, char * OGcommand)
 {
     int cpid, file_descriptor_in, file_descriptor_out, file_descriptor_err, sub_args_index;
 
@@ -119,6 +137,7 @@ void execute_command(char * command, char * arguments[], int token_count)
 
     bool is_bg = false;
     sub_args_index = 1;
+    int status, x;
 
     char * sub_args[MAXINPUTS];
     sub_args[0] = command;              //adding command to subargs to help exec
@@ -143,6 +162,11 @@ void execute_command(char * command, char * arguments[], int token_count)
         else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)              //single command redirection, up to >, <, 2>
         {
             file_descriptor_in = open(arguments[i+1], O_RDONLY, mode);
+            if (file_descriptor_in < 0)
+            {
+                fprintf(stderr, "bash: %s: %s\n", arguments[i+1], strerror(errno));
+                return;
+            }
             redirection = true;
             i++;
         }
@@ -168,6 +192,7 @@ void execute_command(char * command, char * arguments[], int token_count)
 
 
 
+
     if (redirection)
     {
         cpid = fork();
@@ -189,30 +214,26 @@ void execute_command(char * command, char * arguments[], int token_count)
                 close(file_descriptor_err);
             }
             setpgid(0, 0);
-
             execvp(command, sub_args);
         }
         else
         {
             child_id = cpid;
             setpgid(cpid, cpid);
-            //wait(NULL);
-            pause();
+            x = waitpid(cpid, &status, WUNTRACED);
+            //printf("status : %d\n", status);
+            //pause();
         }
-
         clear_args(sub_args);
         return;
     }
 
     char new_jstr[MAXCHARS];
-    for (int i = 0; arguments[i] != NULL; i++)
-    {
-        strcat(new_jstr, arguments[i]);
-    }
+    strcpy(new_jstr, OGcommand);
 
-    int status, x;
 
     cpid = fork();
+
     if (cpid == 0)
     {
         setpgid(0,0);
@@ -224,17 +245,41 @@ void execute_command(char * command, char * arguments[], int token_count)
     }
     else
     {
+        add_job(cpid, new_jstr, Running, is_bg);
+        print_jobs();
         setpgid(cpid, cpid);
         child_id = cpid;
         //pause();
-        x = waitpid(cpid, &status, WUNTRACED | WNOHANG );
-
-        printf("%d\n", x);
-        printf("%d\n", status);
+        x = waitpid(cpid, &status, WUNTRACED);
+        if (WIFSTOPPED(status))
+        {
+            for (int i = 0; i < job_index; i++)
+            {
+                if (cpid == jobs[i].pgid)
+                {
+                    jobs[i].state = Stopped;
+                    break;
+                }
+            }
+        }
+        else    //done
+        {
+            for (int i = 0; i < job_index; i++)
+            {
+                if (cpid == jobs[i].pgid)
+                {
+                    jobs[i].job_id = -1;
+                    jobs[i].job_id = Done;
+                    break;
+                }
+            }
+        }
+        //wait(&status);
+//        printf("status : %d\n", status);
+//        printf("pid : %d\n", x);
 
         new_job.state = Done;
     }
-
     clear_args(sub_args);
     is_bg = false;
 }
@@ -291,21 +336,19 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
         if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
         {
             file_descriptor_out = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
-//            if (file_descriptor_out < 0)
-//            {
-//                perror("open output");
-//                exit(EXIT_FAILURE);
-//            }
         }
         else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_in = open(arguments[i+1], O_RDONLY | O_CREAT, mode);
-            dup2(file_descriptor_in, STDIN_FILENO);
+            file_descriptor_in = open(arguments[i+1], O_RDONLY, mode);
+            if (file_descriptor_in < 0)
+            {
+                fprintf(stderr, "bash: %s: %s\n", arguments[i+1], strerror(errno));
+                return;
+            }
         }
         else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
         {
             file_descriptor_err = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
-            dup2(file_descriptor_err, STDERR_FILENO);
         }
     }
 
@@ -347,22 +390,21 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
     {
         if (strcmp(arguments[i], ">") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_out = creat(arguments[i+1], O_WRONLY);
-//            if (file_descriptor_out < 0)
-//            {
-//                perror("open output");
-//                exit(EXIT_FAILURE);
-//            }
+            file_descriptor_out = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
+
         }
         else if (strcmp(arguments[i], "<") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_in = open(arguments[i+1], O_RDONLY);
-            dup2(file_descriptor_in, STDIN_FILENO);
+            file_descriptor_in = open(arguments[i+1], O_RDONLY, mode);
+            if (file_descriptor_in < 0)
+            {
+                fprintf(stderr, "bash: %s: %s\n", arguments[i+1], strerror(errno));
+                return;
+            }
         }
         else if (strcmp(arguments[i], "2>") == 0 && arguments[i+1] != NULL)
         {
-            file_descriptor_err = creat(arguments[i+1], O_WRONLY);
-            dup2(file_descriptor_err, STDERR_FILENO);
+            file_descriptor_err = open(arguments[i+1], O_WRONLY | O_CREAT, mode);
         }
     }
 
@@ -400,6 +442,46 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
 
 }
 
+void fg()
+{
+    int status;
+    for (int i = job_index-1; i >= 0; i--)
+    {
+        if (jobs[i].state == Running || jobs[i].bg == true)
+        {
+            fprintf(stdout, "%s\n", jobs[i].jstr);
+            tcsetpgrp(STDIN_FILENO, jobs[i].pgid);
+            killpg(jobs[i].pgid, SIGCONT);
+            waitpid(jobs[i].pgid, &status, WUNTRACED);
+            if (WIFSTOPPED(status))
+            {
+                jobs[i].state = Stopped;
+            }
+            else
+            {
+                jobs[i].state = Done;
+            }
+            tcsetpgrp(STDIN_FILENO, getpid());
+            break;
+        }
+    }
+}
+
+void bg()
+{
+
+    for (int i = job_index; i >= 0; i--)
+    {
+        if (jobs[i].state == Stopped)
+        {
+            killpg(jobs[i].pgid, SIGCONT);
+            jobs[i].state = Running;
+            fprintf(stdout, "[%d]+ Running          %s\n", i, jobs[i].jstr);
+            break;
+        }
+    }
+}
+
 void clear_args(char * arguments[])
 {
     for (int i = 0; i < MAXINPUTS; i++)
@@ -408,28 +490,37 @@ void clear_args(char * arguments[])
     }
 }
 
-void printjobs()
+void print_jobs()
 {
     if (job_index == 0)
         return;
-    for (int i = 0; jobs[i]->jstr != NULL; i++)
+    for (int i = 0; i < job_index; i++)
     {
-        if (strcmp(jobs[i]->jstr, "Running") == 0)
+//        if (jobs[i].job_id == -1)
+//            continue;
+
+        if (strcmp(jobs[i].jstr, "Running") == 0)
         {
-            printf("[%d] Running", jobs[i]->job_id);
+            printf("[%d] Running            %s", jobs[i].job_id, jobs[i].jstr);
         }
-        else if (strcmp(jobs[i]->jstr, "Started") == 0)
+        else if (strcmp(jobs[i].jstr, "Started") == 0)
         {
-            printf("[%d] Started", jobs[i]->job_id);
+            printf("[%d] Started            %s", jobs[i].job_id, jobs[i].jstr);
         }
-        else if (strcmp(jobs[i]->jstr, "Done") == 0)
+        else if (strcmp(jobs[i].jstr, "Done") == 0)
         {
-            printf("[%d] Done", jobs[i]->job_id);
-            jobs[i] = NULL;
+            printf("[%d] Done           %s", jobs[i].job_id, jobs[i].jstr);
+            jobs[i].job_id = -1;
         }
     }
+
+    clean_up_jobs();
 }
 
+void clean_up_jobs()
+{
+
+}
 void sig_handler(int signumber)
 {
     pid_t pid = tcgetpgrp(STDIN_FILENO);
@@ -441,18 +532,33 @@ void sig_handler(int signumber)
             {
 
             }
-            child_id = 0;
+            child_id = -1;
             break;
         case SIGTSTP:
             if (killpg(child_id, SIGTSTP) == 0)
             {
-
+                for (int i = 0; i < job_index; i++)
+                {
+                    if (child_id == jobs[i].pgid)
+                    {
+                        jobs[i].state = Stopped;
+                        break;
+                    }
+                }
             }
+            child_id = -1;
             break;
         case SIGCHLD:
-            while (waitpid(-1, NULL, WNOHANG | WUNTRACED) > 0);
+            while (waitpid(-1, NULL, WNOHANG) > 0);
+            for (int i = 0; i < job_index; i++)
+            {
+                if (getpid() == jobs[i].pgid)
+                {
+                    jobs[i].job_id = -1;
+                    break;
+                }
+            }
             break;
-
     }
 }
 
