@@ -17,13 +17,11 @@
 
 #define MAXINPUTS 100
 #define MAXCHARS 2000
-#define MAXLABELS 10
 
 typedef enum {Stopped, Running, Done} status;
 
 typedef struct Job Job;
 mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH;
-int jid = 0;
 int child_id = 0;
 
 void execute_command(char * command, char * arguments[], int token_count, char * OGcommand);
@@ -59,7 +57,7 @@ void add_job(pid_t pid, char * command, status t, bool backg)
     j.bg = backg;
     jobs[job_index] = j;
     job_index++;
-    //free(j);
+    //free(tayk);
 }
 
 
@@ -286,7 +284,7 @@ void execute_command(char * command, char * arguments[], int token_count, char *
 
 void file_redirection_piping(char * command, char * command2, char * arguments[], int token_count) {
     int pdf[2];
-    int rpid, lpid, argument_index;
+    int rpid, lpid, argument_index, status;
     bool is_bg;
 
     int file_descriptor_in = -1;
@@ -432,7 +430,7 @@ void file_redirection_piping(char * command, char * command2, char * arguments[]
         setpgid(0, lpid);
         execvp(command2, right_arguments);
     }
-
+    //child_id = lpid;
     close(pdf[0]);
     close(pdf[1]);
     wait((int *)NULL);
@@ -447,11 +445,11 @@ void fg()
     int status;
     for (int i = job_index-1; i >= 0; i--)
     {
-        if (jobs[i].state == Running || jobs[i].bg == true)
+        if (jobs[i].state == Stopped || jobs[i].bg == true)
         {
             fprintf(stdout, "%s\n", jobs[i].jstr);
-            tcsetpgrp(STDIN_FILENO, jobs[i].pgid);
             killpg(jobs[i].pgid, SIGCONT);
+            child_id = jobs[i].pgid;
             waitpid(jobs[i].pgid, &status, WUNTRACED);
             if (WIFSTOPPED(status))
             {
@@ -461,7 +459,6 @@ void fg()
             {
                 jobs[i].state = Done;
             }
-            tcsetpgrp(STDIN_FILENO, getpid());
             break;
         }
     }
@@ -499,15 +496,15 @@ void print_jobs()
 //        if (jobs[i].job_id == -1)
 //            continue;
 
-        if (strcmp(jobs[i].jstr, "Running") == 0)
+        if (jobs[i].state == Running)
         {
             printf("[%d] Running            %s", jobs[i].job_id, jobs[i].jstr);
         }
-        else if (strcmp(jobs[i].jstr, "Started") == 0)
+        else if (jobs[i].state == Stopped)
         {
             printf("[%d] Started            %s", jobs[i].job_id, jobs[i].jstr);
         }
-        else if (strcmp(jobs[i].jstr, "Done") == 0)
+        else if (jobs[i].state == Done)
         {
             printf("[%d] Done           %s", jobs[i].job_id, jobs[i].jstr);
             jobs[i].job_id = -1;
